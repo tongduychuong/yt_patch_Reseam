@@ -79,49 +79,63 @@ jobs:
         run: |
           cd work
           python3 - <<'EOF'
-          import os, re, zipfile, urllib.request
+          import json, os, re, zipfile
 
           yt_ver = os.environ.get("INPUT_YT_VER", "").strip()
           ytm_ver = os.environ.get("INPUT_YTM_VER", "").strip()
 
-          # 1. Dò phiên bản bên trong gói patches.reseam
+          # Ràng buộc dải phiên bản thực tế để loại bỏ số build/ID lạc vào
+          YT_PATTERN = re.compile(r'^(1[89]|2[0-2])\.\d+\.\d+$')
+          YTM_PATTERN = re.compile(r'^([6-9]|1[0-1])\.\d+\.\d+$')
+
+          def ver_key(v: str):
+              return [int(x) for x in v.split(".")]
+
+          def collect_versions_from_obj(obj, target_pkg: str, found: set):
+              if isinstance(obj, dict):
+                  pkg_val = str(obj.get("name") or obj.get("packageName") or "")
+                  if pkg_val == target_pkg and isinstance(obj.get("versions"), list):
+                      for v in obj["versions"]:
+                          if isinstance(v, str):
+                              found.add(v.strip())
+                  for val in obj.values():
+                      collect_versions_from_obj(val, target_pkg, found)
+              elif isinstance(obj, list):
+                  for item in obj:
+                      collect_versions_from_obj(item, target_pkg, found)
+
+          yt_candidates = set()
+          ytm_candidates = set()
+
           if not yt_ver or not ytm_ver:
               try:
                   with zipfile.ZipFile("patches.reseam", "r") as zf:
                       for name in zf.namelist():
-                          if name.endswith(".json"):
-                              data = zf.read(name).decode("utf-8", errors="ignore")
-                              if not ytm_ver and ("com.google.android.youtube.music" in data or "youtube.music" in data):
-                                  m_ytm = re.findall(r'\b([89]\.\d+\.\d+|1\d\.\d+\.\d+)\b', data)
-                                  if m_ytm:
-                                      ytm_ver = sorted(set(m_ytm), key=lambda s: [int(x) for x in s.split(".")])[-1]
-                              if not yt_ver and "com.google.android.youtube" in data:
-                                  m_yt = re.findall(r'\b(2[0-9]\.\d+\.\d+)\b', data)
-                                  if m_yt:
-                                      yt_ver = sorted(set(m_yt), key=lambda s: [int(x) for x in s.split(".")])[-1]
+                          if name.lower().endswith(".json"):
+                              raw = zf.read(name).decode("utf-8", errors="ignore")
+                              try:
+                                  data = json.loads(raw)
+                                  if not yt_ver:
+                                      collect_versions_from_obj(data, "com.google.android.youtube", yt_candidates)
+                                  if not ytm_ver:
+                                      collect_versions_from_obj(data, "com.google.android.apps.youtube.music", ytm_candidates)
+                              except json.JSONDecodeError:
+                                  continue
               except Exception as e:
-                  print("Zip inspection note:", e)
+                  print("Zip inspection error:", e)
 
-          # 2. Dò bổ sung từ trang https://reseam.app/vi/patches/ nếu còn thiếu
-          if not yt_ver or not ytm_ver:
-              try:
-                  req = urllib.request.Request(
-                      "https://reseam.app/vi/patches/",
-                      headers={"User-Agent": "Mozilla/5.0"}
-                  )
-                  html = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", errors="ignore")
-                  if not yt_ver:
-                      m_yt = re.findall(r'\b(2[0-9]\.\d+\.\d+)\b', html)
-                      if m_yt:
-                          yt_ver = sorted(set(m_yt), key=lambda s: [int(x) for x in s.split(".")])[-1]
-                  if not ytm_ver:
-                      m_ytm = re.findall(r'\b([89]\.\d+\.\d+|1\d\.\d+\.\d+)\b', html)
-                      if m_ytm:
-                          ytm_ver = sorted(set(m_ytm), key=lambda s: [int(x) for x in s.split(".")])[-1]
-              except Exception as e:
-                  print("Web fetch note:", e)
+          valid_yt = [v for v in yt_candidates if YT_PATTERN.match(v)]
+          valid_ytm = [v for v in ytm_candidates if YTM_PATTERN.match(v)]
 
-          # 3. Giá trị dự phòng khi không tự dò ra
+          print("YT candidates:", sorted(valid_yt, key=ver_key))
+          print("YTM candidates:", sorted(valid_ytm, key=ver_key))
+
+          if not yt_ver and valid_yt:
+              yt_ver = sorted(valid_yt, key=ver_key)[-1]
+          if not ytm_ver and valid_ytm:
+              ytm_ver = sorted(valid_ytm, key=ver_key)[-1]
+
+          # Giá trị dự phòng chuẩn nếu không đọc được từ JSON
           yt_ver = yt_ver or "21.37.42"
           ytm_ver = ytm_ver or "9.40.51"
 
