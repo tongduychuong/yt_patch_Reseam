@@ -51,7 +51,7 @@ jobs:
           repo = os.environ["GH_REPO"]
           force = os.environ.get("FORCE_BUILD", "false").lower() == "true"
 
-          def gh_get_json(url: str) -> dict:
+          def gh_get_json(url: str):
               headers = {
                   "User-Agent": "github-actions-reseam-checker",
                   "Accept": "application/vnd.github+json",
@@ -62,22 +62,48 @@ jobs:
               with urllib.request.urlopen(req, timeout=20) as resp:
                   return json.loads(resp.read().decode("utf-8"))
 
-          latest_cli = (
-              gh_get_json("https://api.github.com/repos/reseam/reseam/releases/latest").get("tag_name") or ""
-          ).strip()
-          latest_patches = (
-              gh_get_json("https://api.github.com/repos/Reseam/patches/releases/latest").get("tag_name") or ""
-          ).strip()
+          def resolve_repo_tag(target_repo: str) -> str:
+              # 1. Thử /releases/latest
+              try:
+                  data = gh_get_json(f"https://api.github.com/repos/{target_repo}/releases/latest")
+                  if isinstance(data, dict):
+                      tag = (data.get("tag_name") or "").strip()
+                      if tag:
+                          return tag
+              except urllib.error.HTTPError as e:
+                  print(f"[{target_repo}] /releases/latest -> HTTP {e.code}")
 
-          if not latest_cli or not latest_patches:
-              raise RuntimeError("Could not fetch latest tag from reseam/reseam or Reseam/patches")
+              # 2. Fallback /releases (lấy release đầu tiên, kể cả prerelease)
+              try:
+                  releases = gh_get_json(f"https://api.github.com/repos/{target_repo}/releases?per_page=5")
+                  if isinstance(releases, list) and releases:
+                      tag = (releases[0].get("tag_name") or "").strip()
+                      if tag:
+                          return tag
+              except urllib.error.HTTPError as e:
+                  print(f"[{target_repo}] /releases -> HTTP {e.code}")
+
+              # 3. Fallback /tags (lấy tag mới nhất nếu repo không tạo Release)
+              try:
+                  tags = gh_get_json(f"https://api.github.com/repos/{target_repo}/tags?per_page=5")
+                  if isinstance(tags, list) and tags:
+                      tag = (tags[0].get("name") or "").strip()
+                      if tag:
+                          return tag
+              except urllib.error.HTTPError as e:
+                  print(f"[{target_repo}] /tags -> HTTP {e.code}")
+
+              raise RuntimeError(f"Không tìm thấy release hoặc tag nào cho {target_repo}")
+
+          latest_cli = resolve_repo_tag("reseam/reseam")
+          latest_patches = resolve_repo_tag("Reseam/patches")
 
           prev_cli = ""
           prev_patches = ""
 
           try:
               rel = gh_get_json(f"https://api.github.com/repos/{repo}/releases/latest")
-              body = rel.get("body") or ""
+              body = (rel.get("body") or "") if isinstance(rel, dict) else ""
 
               m_cli = re.search(r"Reseam CLI\s*\(`reseam/reseam`\):\s*`([^`]+)`", body)
               m_patches = re.search(r"Reseam Patches\s*\(`Reseam/patches`\):\s*`([^`]+)`", body)
