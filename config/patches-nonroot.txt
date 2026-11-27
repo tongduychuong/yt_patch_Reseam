@@ -1,0 +1,5 @@
+# Danh sách tùy chỉnh patch cho bản Non-root
+# Dùng dấu + trước tên patch để bật, dấu - để tắt
+# Ví dụ:
+# +Hide ads
+# -Enable debugging

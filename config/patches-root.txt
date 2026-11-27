@@ -1,0 +1,3 @@
+# Danh sách tùy chỉnh patch cho bản Root (GmsCore support đã được tắt mặc định trong workflow)
+# Ví dụ:
+# +Hide ads
