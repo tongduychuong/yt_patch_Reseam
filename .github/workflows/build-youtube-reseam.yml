@@ -43,8 +43,8 @@ jobs:
           mkdir -p work
           cd work
 
-          # 1. Tải Reseam CLI mới nhất từ Reseam/reseam
-          CLI_URL=$(curl -s https://api.github.com/repos/Reseam/reseam/releases/latest \
+          # 1. Tải Reseam CLI mới nhất từ reseam/reseam
+          CLI_URL=$(curl -s https://api.github.com/repos/reseam/reseam/releases/latest \
             | grep -i "browser_download_url" \
             | grep -iE "linux.*(x64|amd64)|x86_64.*linux" \
             | head -n 1 \
@@ -79,15 +79,14 @@ jobs:
         run: |
           python3 scripts/resolve_versions.py \
             --bundle work/patches.reseam \
+            --yt-out youtube.txt \
+            --ytm-out youtube_music.txt \
             --env-file /tmp/resolved_versions.env
           cat /tmp/resolved_versions.env >> "$GITHUB_ENV"
-          source /tmp/resolved_versions.env
-
-          printf "%s\n" "$YT_VER" > youtube.txt
-          printf "%s\n" "$YTM_VER" > youtube_music.txt
 
       - name: Commit Resolved Versions
         run: |
+          source /tmp/resolved_versions.env
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -105,8 +104,8 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq unzip wget
           cd work
 
-          python3 ../scripts/download_apk.py youtube "$YT_VER" yt_orig.apk
-          python3 ../scripts/download_apk.py ytm "$YTM_VER" ytm_orig.apk
+          python3 ../scripts/download_apk.py youtube ../youtube.txt yt_orig.apk
+          python3 ../scripts/download_apk.py ytm ../youtube_music.txt ytm_orig.apk
 
           ls -lh yt_orig.apk ytm_orig.apk
 
@@ -115,6 +114,7 @@ jobs:
           SECRET_TRUST_KEY: ${{ secrets.RESEAM_TRUST_KEY }}
         run: |
           cd work
+          source /tmp/resolved_versions.env
 
           TRUST_KEY="${SECRET_TRUST_KEY:-556c1b22f4e03398212ba10fe6a31db252df49f599b938d24a9f2b6baec41a1d}"
 
@@ -128,12 +128,41 @@ jobs:
             --trust "$TRUST_KEY" \
             --output "youtube-music-reseam-${YTM_VER}.apk"
 
+      - name: Generate Changelog
+        run: |
+          source /tmp/resolved_versions.env
+
+          CLI_TAG=$(curl -s https://api.github.com/repos/reseam/reseam/releases/latest \
+            | grep -i '"tag_name"' \
+            | head -n 1 \
+            | cut -d '"' -f 4)
+          CLI_TAG="${CLI_TAG:-latest}"
+
+          PATCHES_TAG=$(curl -s https://api.github.com/repos/Reseam/patches/releases/latest \
+            | grep -i '"tag_name"' \
+            | head -n 1 \
+            | cut -d '"' -f 4)
+          PATCHES_TAG="${PATCHES_TAG:-latest}"
+
+          cat <<EOF > CHANGELOG.md
+          # Reseam Build #${{ github.run_number }}
+
+          - **YouTube version:** \`${YT_VER}\`
+          - **YouTube Music version:** \`${YTM_VER}\`
+          - **Reseam CLI (\`reseam/reseam\`):** \`${CLI_TAG}\`
+          - **Reseam Patches (\`Reseam/patches\`):** \`${PATCHES_TAG}\`
+          - **Commit:** \`${{ github.sha }}\`
+          EOF
+          cat CHANGELOG.md
+
       - name: Create Release & Upload APKs
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: "Reseam Build #${{ github.run_number }} (YT ${{ env.YT_VER }})"
+          body_path: CHANGELOG.md
           files: |
+            CHANGELOG.md
             work/youtube-reseam-${{ env.YT_VER }}.apk
             work/youtube-music-reseam-${{ env.YTM_VER }}.apk
         env:
