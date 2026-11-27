@@ -18,7 +18,7 @@ PATCHES_WEB_URL = "https://reseam.app/vi/patches/"
 # Bắt buộc đủ 3 cụm X.Y.Z (ví dụ: 21.37.42, 20.26.46, 21.23.492)
 FULL_VER_RE = re.compile(r"\b(\d{1,2})\.(\d{1,3})\.(\d{1,3})\b")
 
-# Giới hạn dải major hợp lệ cho từng app để tránh bắt nhầm phiên bản app khác
+# Giới hạn dải major hợp lệ cho từng app
 YT_MAJOR_MIN, YT_MAJOR_MAX = 19, 30
 YTM_MAJOR_MIN, YTM_MAJOR_MAX = 7, 15
 
@@ -148,6 +148,14 @@ def scan_web(url: str) -> tuple[set[str], set[str]]:
     return yt_found, ytm_found
 
 
+def write_version_file(path: str, version: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"{version}\n")
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -157,6 +165,8 @@ def parse_args():
     parser.add_argument("--bundle", default="patches.reseam", help="Path to patches.reseam")
     parser.add_argument("--yt-version", default=os.environ.get("INPUT_YT_VER", ""), help="Override YT version")
     parser.add_argument("--ytm-version", default=os.environ.get("INPUT_YTM_VER", ""), help="Override YTM version")
+    parser.add_argument("--yt-out", default="youtube.txt", help="Output file path for YT version")
+    parser.add_argument("--ytm-out", default="youtube_music.txt", help="Output file path for YTM version")
     parser.add_argument("--env-file", default="", help="Optional path to write YT_VER=... and YTM_VER=...")
     return parser.parse_args()
 
@@ -208,6 +218,9 @@ def main():
 
     print(f"Resolved YouTube version: {yt_ver}")
     print(f"Resolved YouTube Music version: {ytm_ver}")
+
+    write_version_file(args.yt_out, yt_ver)
+    write_version_file(args.ytm_out, ytm_ver)
 
     if args.env_file:
         with open(args.env_file, "w", encoding="utf-8") as f:
