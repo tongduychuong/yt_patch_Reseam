@@ -77,72 +77,28 @@ jobs:
           INPUT_YT_VER: ${{ github.event.inputs.yt_version }}
           INPUT_YTM_VER: ${{ github.event.inputs.ytm_version }}
         run: |
-          cd work
-          python3 - <<'EOF'
-          import json, os, re, zipfile
-
-          yt_ver = os.environ.get("INPUT_YT_VER", "").strip()
-          ytm_ver = os.environ.get("INPUT_YTM_VER", "").strip()
-
-          # Ràng buộc dải phiên bản thực tế để loại bỏ số build/ID lạc vào
-          YT_PATTERN = re.compile(r'^(1[89]|2[0-3])\.\d+\.\d+$')
-          YTM_PATTERN = re.compile(r'^([6-9]|1[0-2])\.\d+\.\d+$')
-
-          def ver_key(v: str):
-              return [int(x) for x in v.split(".")]
-
-          def collect_versions_from_obj(obj, target_pkg: str, found: set):
-              if isinstance(obj, dict):
-                  pkg_val = str(obj.get("name") or obj.get("packageName") or "")
-                  if pkg_val == target_pkg and isinstance(obj.get("versions"), list):
-                      for v in obj["versions"]:
-                          if isinstance(v, str):
-                              found.add(v.strip())
-                  for val in obj.values():
-                      collect_versions_from_obj(val, target_pkg, found)
-              elif isinstance(obj, list):
-                  for item in obj:
-                      collect_versions_from_obj(item, target_pkg, found)
-
-          yt_candidates = set()
-          ytm_candidates = set()
-
-          if not yt_ver or not ytm_ver:
-              try:
-                  with zipfile.ZipFile("patches.reseam", "r") as zf:
-                      for name in zf.namelist():
-                          if name.lower().endswith(".json"):
-                              raw = zf.read(name).decode("utf-8", errors="ignore")
-                              try:
-                                  data = json.loads(raw)
-                                  if not yt_ver:
-                                      collect_versions_from_obj(data, "com.google.android.youtube", yt_candidates)
-                                  if not ytm_ver:
-                                      collect_versions_from_obj(data, "com.google.android.apps.youtube.music", ytm_candidates)
-                              except json.JSONDecodeError:
-                                  continue
-              except Exception as e:
-                  print("Zip inspection error:", e)
-
-          valid_yt = [v for v in yt_candidates if YT_PATTERN.match(v)]
-          valid_ytm = [v for v in ytm_candidates if YTM_PATTERN.match(v)]
-
-          print("YT candidates:", sorted(valid_yt, key=ver_key))
-          print("YTM candidates:", sorted(valid_ytm, key=ver_key))
-
-          if not yt_ver and valid_yt:
-              yt_ver = sorted(valid_yt, key=ver_key)[-1]
-          if not ytm_ver and valid_ytm:
-              ytm_ver = sorted(valid_ytm, key=ver_key)[-1]
-
-          print(f"Resolved YouTube version: {yt_ver}")
-          print(f"Resolved YouTube Music version: {ytm_ver}")
-
-          with open("/tmp/resolved_versions.env", "w") as f:
-              f.write(f"YT_VER={yt_ver}\n")
-              f.write(f"YTM_VER={ytm_ver}\n")
-          EOF
+          python3 scripts/resolve_versions.py \
+            --bundle work/patches.reseam \
+            --env-file /tmp/resolved_versions.env
           cat /tmp/resolved_versions.env >> "$GITHUB_ENV"
+          source /tmp/resolved_versions.env
+
+          printf "%s\n" "$YT_VER" > youtube.txt
+          printf "%s\n" "$YTM_VER" > youtube_music.txt
+
+      - name: Commit Resolved Versions
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add youtube.txt youtube_music.txt
+
+          if git diff --staged --quiet; then
+            echo "No version changes to commit."
+          else
+            git commit -m "chore: update versions YT=${YT_VER}, YTM=${YTM_VER}"
+            git push
+          fi
 
       - name: Download Exact Original APKs
         run: |
