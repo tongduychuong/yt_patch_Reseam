@@ -1,0 +1,128 @@
+name: Build YouTube with Reseam
+
+on:
+  workflow_dispatch:
+    inputs:
+      youtube_version:
+        description: "Phiên bản YouTube mục tiêu (vd: 21.37.42 hoặc để trống lấy bản tương thích)"
+        required: false
+        default: ""
+      apk_url:
+        description: "URL trực tiếp tải APK YouTube gốc (tùy chọn, ưu tiên nếu có)"
+        required: false
+        default: ""
+      release_tag:
+        description: "Tag phát hành (vd: yt-reseam-20261127)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-youtube:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl wget unzip
+
+      - name: Download Reseam CLI & latest .reseam bundle
+        run: |
+          mkdir -p work/bin work/bundle work/out
+
+          CLI_URL=$(curl -sL https://api.github.com/repos/Reseam/reseam/releases/latest \
+            | jq -r '.assets[] | select(.name | test("reseam-linux-x64"; "i")) | .browser_download_url' \
+            | head -n 1)
+          test -n "$CLI_URL"
+          curl -fSL "$CLI_URL" -o work/bin/reseam
+          chmod +x work/bin/reseam
+          ./work/bin/reseam --version
+
+          BUNDLE_URL=$(curl -sL https://api.github.com/repos/Reseam/patches/releases/latest \
+            | jq -r '.assets[] | select(.name | endswith(".reseam")) | .browser_download_url' \
+            | head -n 1)
+          test -n "$BUNDLE_URL"
+          curl -fSL "$BUNDLE_URL" -o work/bundle/patches.reseam
+          ./work/bin/reseam bundle list work/bundle/patches.reseam > work/bundle/patches-list.txt
+          cat work/bundle/patches-list.txt
+
+      - name: Prepare base YouTube APK
+        env:
+          APK_URL_SECRET: ${{ secrets.YT_APK_URL }}
+        run: |
+          mkdir -p work/apk
+          chmod +x scripts/get-yt-apk.sh
+          ./scripts/get-yt-apk.sh "${{ inputs.youtube_version }}" "work/apk/youtube.apk" "${{ inputs.apk_url }}" "$APK_URL_SECRET"
+
+      - name: Patch YouTube (Non-root)
+        run: |
+          EXTRA_ARGS=()
+          if [ -s "config/patches-nonroot.txt" ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+              [[ -z "$line" || "$line" =~ ^# ]] && continue
+              if [[ "$line" == +* ]]; then
+                EXTRA_ARGS+=(--enable "${line:1}")
+              elif [[ "$line" == -* ]]; then
+                EXTRA_ARGS+=(--disable "${line:1}")
+              fi
+            done < config/patches-nonroot.txt
+          fi
+
+          ./work/bin/reseam patch work/apk/youtube.apk \
+            --bundle work/bundle/patches.reseam \
+            --trust \
+            "${EXTRA_ARGS[@]}" \
+            --output work/out/youtube-reseam-nonroot.apk
+
+      - name: Patch YouTube (Root)
+        run: |
+          EXTRA_ARGS=(--disable "GmsCore support")
+          if [ -s "config/patches-root.txt" ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+              [[ -z "$line" || "$line" =~ ^# ]] && continue
+              if [[ "$line" == +* ]]; then
+                EXTRA_ARGS+=(--enable "${line:1}")
+              elif [[ "$line" == -* ]]; then
+                EXTRA_ARGS+=(--disable "${line:1}")
+              fi
+            done < config/patches-root.txt
+          fi
+
+          ./work/bin/reseam patch work/apk/youtube.apk \
+            --bundle work/bundle/patches.reseam \
+            --trust \
+            "${EXTRA_ARGS[@]}" \
+            --output work/out/youtube-reseam-root.apk
+
+      - name: Package Root Magisk/KernelSU Module
+        run: |
+          chmod +x scripts/build-module.sh
+          ./scripts/build-module.sh "work/out/youtube-reseam-root.apk" "work/out/youtube-reseam-root-module.zip" "${{ inputs.youtube_version }}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="yt-reseam-$(date -u +%Y%m%d-%H%M)"
+          fi
+
+          gh release create "$TAG" \
+            work/out/youtube-reseam-nonroot.apk \
+            work/out/youtube-reseam-root.apk \
+            work/out/youtube-reseam-root-module.zip \
+            work/bundle/patches-list.txt \
+            --title "YouTube Reseam Build ($TAG)" \
+            --notes "Tự động build từ Reseam CLI & Reseam/patches."
