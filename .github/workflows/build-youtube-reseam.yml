@@ -85,8 +85,8 @@ jobs:
           ytm_ver = os.environ.get("INPUT_YTM_VER", "").strip()
 
           # Ràng buộc dải phiên bản thực tế để loại bỏ số build/ID lạc vào
-          YT_PATTERN = re.compile(r'^(1[89]|2[0-2])\.\d+\.\d+$')
-          YTM_PATTERN = re.compile(r'^([6-9]|1[0-1])\.\d+\.\d+$')
+          YT_PATTERN = re.compile(r'^(1[89]|2[0-3])\.\d+\.\d+$')
+          YTM_PATTERN = re.compile(r'^([6-9]|1[0-2])\.\d+\.\d+$')
 
           def ver_key(v: str):
               return [int(x) for x in v.split(".")]
@@ -150,30 +150,24 @@ jobs:
 
       - name: Download Exact Original APKs
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq unzip wget
           cd work
-          wget -q https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu -O apkeep
-          chmod +x apkeep
 
-          echo "Tải YouTube bản: $YT_VER"
-          ./apkeep -a "com.google.android.youtube@${YT_VER}" .
+          python3 ../scripts/download_apk.py youtube "$YT_VER" yt_orig.apk
+          python3 ../scripts/download_apk.py ytm "$YTM_VER" ytm_orig.apk
 
-          echo "Tải YouTube Music bản: $YTM_VER"
-          ./apkeep -a "com.google.android.apps.youtube.music@${YTM_VER}" .
-
-          ls -lh *.apk
+          ls -lh yt_orig.apk ytm_orig.apk
 
       - name: Patch YouTube & YouTube Music
         run: |
           cd work
-          YT_APK=$(ls com.google.android.youtube*.apk | head -n 1)
-          YTM_APK=$(ls com.google.android.apps.youtube.music*.apk | head -n 1)
 
-          "$RESEAM_BIN" patch "$YT_APK" \
+          "$RESEAM_BIN" patch yt_orig.apk \
             --bundle patches.reseam \
             --trust \
             --output "youtube-reseam-${YT_VER}.apk"
 
-          "$RESEAM_BIN" patch "$YTM_APK" \
+          "$RESEAM_BIN" patch ytm_orig.apk \
             --bundle patches.reseam \
             --trust \
             --output "youtube-music-reseam-${YTM_VER}.apk"
