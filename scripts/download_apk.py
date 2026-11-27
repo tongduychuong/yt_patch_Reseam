@@ -1,199 +1,401 @@
-import argparse
 import os
-import re
 import sys
+import subprocess
+import shutil
 import urllib.parse
-import urllib.request
-import zipfile
+import time
+import re
 
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+# ============================================================
+# CONFIG
+# ============================================================
+
+def read_version_from_txt(app_name: str) -> str:
+    txt_name = "youtube_music.txt" if app_name in ("ytm", "youtube-music") else "youtube.txt"
+    search_paths = [
+        txt_name,
+        os.path.join("..", txt_name),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", txt_name),
+    ]
+    for path in search_paths:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                ver = f.read().strip()
+                if ver:
+                    return ver
+    return ""
+
+
+raw_arg2 = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
+raw_arg3 = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
+
+app_key = (os.environ.get("APP") or (sys.argv[1] if len(sys.argv) > 1 else "youtube")).strip().lower()
+
+# Hỗ trợ truyền trực tiếp version, đường dẫn file (../youtube.txt), hoặc tự đọc từ youtube.txt / youtube_music.txt
+if raw_arg2 and os.path.isfile(raw_arg2):
+    with open(raw_arg2, "r", encoding="utf-8") as f:
+        version = f.read().strip()
+    output_filename = raw_arg3
+elif raw_arg2 and raw_arg2.lower() != "auto":
+    version = os.environ.get("VERSION", "").strip() or raw_arg2
+    output_filename = raw_arg3
+else:
+    version = (os.environ.get("VERSION") or read_version_from_txt(app_key)).strip()
+    output_filename = raw_arg2 if (raw_arg2 and not raw_arg2.lower() == "auto") else raw_arg3
 
 APP_CONFIG = {
     "youtube": {
+        "label": "YouTube",
         "pkg": "com.google.android.youtube",
-        "slug": "youtube",
-    },
-    "yt": {
-        "pkg": "com.google.android.youtube",
-        "slug": "youtube",
+        "dir_prefix": "google-inc/youtube/youtube",
+        "slug_prefix": "youtube",
+        "default_out": "youtube.apk",
     },
     "ytm": {
+        "label": "YouTube Music",
         "pkg": "com.google.android.apps.youtube.music",
-        "slug": "youtube-music",
+        "dir_prefix": "google-inc/youtube-music/youtube-music",
+        "slug_prefix": "youtube-music",
+        "default_out": "youtube-music.apk",
     },
-    "music": {
+    "youtube-music": {
+        "label": "YouTube Music",
         "pkg": "com.google.android.apps.youtube.music",
-        "slug": "youtube-music",
+        "dir_prefix": "google-inc/youtube-music/youtube-music",
+        "slug_prefix": "youtube-music",
+        "default_out": "youtube-music.apk",
     },
 }
 
+if app_key not in APP_CONFIG:
+    print(f"ERROR: Unsupported APP '{app_key}'. Use 'youtube' or 'ytm'.")
+    sys.exit(1)
 
-def resolve_version(app_key: str, version_arg: str) -> str:
-    val = (version_arg or "").strip()
+if not version:
+    print("ERROR: VERSION is missing (not passed and not found in youtube.txt / youtube_music.txt)")
+    sys.exit(1)
 
-    # Nếu truyền vào là đường dẫn file (ví dụ: ../youtube.txt hoặc youtube.txt)
-    if val and os.path.isfile(val):
-        with open(val, "r", encoding="utf-8") as f:
-            ver = f.read().strip()
-            if ver:
-                return ver
-            raise ValueError(f"File phiên bản '{val}' đang rỗng.")
+cfg = APP_CONFIG[app_key]
+if not output_filename:
+    output_filename = cfg["default_out"]
 
-    # Nếu truyền chuỗi phiên bản trực tiếp (không phải 'auto')
-    if val and val.lower() != "auto":
-        return val
+BASE = "https://www.apkmirror.com"
+V = version.replace(".", "-")
+UA = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36"
 
-    # Tự tìm file mặc định youtube.txt hoặc youtube_music.txt
-    is_ytm = app_key in ("ytm", "music")
-    default_name = "youtube_music.txt" if is_ytm else "youtube.txt"
-    search_paths = [
-        default_name,
-        os.path.join("..", default_name),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", default_name),
-    ]
 
-    for p in search_paths:
-        if os.path.isfile(p):
-            with open(p, "r", encoding="utf-8") as f:
-                ver = f.read().strip()
-                if ver:
-                    print(f"Đọc phiên bản '{ver}' từ {p}")
-                    return ver
+# ============================================================
+# HELPERS
+# ============================================================
 
-    raise FileNotFoundError(
-        f"Không tìm thấy phiên bản cho '{app_key}' và không đọc được '{default_name}'."
+def sleep(sec):
+    time.sleep(sec)
+
+
+def wget(url):
+    try:
+        result = subprocess.run(
+            [
+                "wget",
+                "-q",
+                "--max-redirect=10",
+                "--timeout=60",
+                "--tries=3",
+                "-U",
+                UA,
+                url,
+                "-O",
+                "-"
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="ignore"
+        )
+        return result.stdout
+    except Exception as e:
+        print(f"wget error: {e}")
+        return ""
+
+
+def download(url, filename):
+    subprocess.run(
+        [
+            "wget",
+            "-q",
+            "--show-progress",
+            "--max-redirect=10",
+            "--timeout=180",
+            "--tries=5",
+            "-U",
+            UA,
+            url,
+            "-O",
+            filename
+        ],
+        check=True
     )
 
 
-def http_get(url: str, timeout: int = 30) -> bytes:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
+def clean_url(url):
+    if not url:
+        return url
+    return (
+        url
+        .replace("&amp;", "&")
+        .replace("amp;", "")
+        .strip()
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
 
 
-def find_release_page(slug: str, version: str) -> str:
-    ver_slug = version.replace(".", "-")
-    search_urls = [
-        f"https://www.apkmirror.com/apk/google-inc/{slug}/{slug}-{ver_slug}-release/",
-        f"https://www.apkmirror.com/?post_type=app_release&searchtype=apk&s={urllib.parse.quote(slug + ' ' + version)}",
-    ]
-
-    for url in search_urls:
-        try:
-            html = http_get(url).decode("utf-8", errors="ignore")
-            if "/release/" in html:
-                m = re.search(
-                    r'href="(/apk/google-inc/' + re.escape(slug) + r"/" + re.escape(slug) + r"-" + re.escape(ver_slug) + r'[^"]*release/[^"]*)"',
-                    html,
-                )
-                if m:
-                    return "https://www.apkmirror.com" + m.group(1)
-                if url.endswith("-release/") and "404" not in html[:1000].lower():
-                    return url
-        except Exception as exc:
-            print(f"Thử tìm release thất bại ({url}): {exc}")
-
-    raise RuntimeError(f"Không tìm thấy trang release APKMirror cho {slug} phiên bản {version}.")
+def absolute_url(url, base):
+    url = clean_url(url)
+    if not url:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("//"):
+        return "https:" + url
+    return urllib.parse.urljoin(base, url)
 
 
-def find_variant_page(release_url: str) -> str:
-    html = http_get(release_url).decode("utf-8", errors="ignore")
+# ============================================================
+# APKMIRROR PARSERS
+# ============================================================
 
-    # Loại trừ bundle (.apkm / .xapk) và ưu tiên biến thể APK chuẩn
-    candidates = re.findall(r'href="(/apk/google-inc/[^"]+-download/)"', html)
-    for href in candidates:
-        low = href.lower()
-        if "bundle" in low or "apkm" in low or "xapk" in low:
-            continue
-        return "https://www.apkmirror.com" + href
+def find_download_button(html):
+    if not html:
+        return None
 
-    if candidates:
-        return "https://www.apkmirror.com" + candidates[0]
-
-    raise RuntimeError(f"Không tìm thấy trang tải biến thể APK trong {release_url}.")
-
-
-def find_final_download_url(variant_url: str) -> str:
-    html = http_get(variant_url).decode("utf-8", errors="ignore")
-
-    # Tìm link tải trực tiếp từ trang download của APKMirror
     patterns = [
-        r'href="(https://www\.apkmirror\.com/wp-content/themes/APKMirror/download\.php\?[^"]+)"',
-        r'href="(/wp-content/themes/APKMirror/download\.php\?[^"]+)"',
-        r'href="(https://[^"]*download\.php\?id=[^"&]+[^"]*)"',
+        r'downloadButton[\s\S]{0,2000}?href=["\']([^"\']+)["\']',
+        r'<a[^>]*class=["\'][^"\']*downloadButton[^"\']*["\'][^>]*href=["\']([^"\']+)["\']',
+        r'<a[^>]*href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*downloadButton[^"\']*["\']',
     ]
-    for pat in patterns:
-        m = re.search(pat, html)
-        if m:
-            link = m.group(1).replace("&amp;", "&")
-            if link.startswith("/"):
-                link = "https://www.apkmirror.com" + link
-            return link
 
-    raise RuntimeError(f"Không tìm thấy liên kết tải trực tiếp từ {variant_url}.")
+    for pattern in patterns:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match and match.group(1):
+            return clean_url(match.group(1))
+
+    return None
 
 
-def verify_apk(file_path: str) -> None:
-    if not os.path.isfile(file_path) or os.path.getsize(file_path) < 1024 * 1024:
-        raise RuntimeError(f"Tệp '{file_path}' không hợp lệ hoặc quá nhỏ.")
-    if not zipfile.is_zipfile(file_path):
-        raise RuntimeError(f"Tệp '{file_path}' không phải định dạng APK/ZIP hợp lệ.")
+def find_here(html):
+    if not html:
+        return None
+
+    patterns = [
+        r'href=["\']([^"\']+)["\'][^>]*>\s*here\s*<',
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>\s*here\s*</a>',
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>[\s\S]{0,300}?\bhere\b[\s\S]{0,300}?</a>',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match and match.group(1):
+            return clean_url(match.group(1))
+
+    return None
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Tải APK gốc theo phiên bản từ file hoặc tham số.")
-    parser.add_argument("app", help="Loại ứng dụng: youtube | ytm")
-    parser.add_argument("version_or_file", nargs="?", default="", help="Phiên bản (vd: 21.37.42) hoặc đường dẫn file (vd: ../youtube.txt)")
-    parser.add_argument("output", nargs="?", default="", help="Đường dẫn file APK xuất ra")
-    return parser.parse_args()
+# ============================================================
+# FILE VALIDATION
+# ============================================================
 
+def check_file(filename):
+    if not os.path.exists(filename):
+        return "invalid"
+
+    try:
+        result = subprocess.run(
+            ["unzip", "-l", filename],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="ignore"
+        )
+
+        out = result.stdout
+        if result.returncode != 0:
+            return "invalid"
+
+        if "base.apk" in out or "splits/" in out or "split_config." in out:
+            return "bundle"
+
+        if "AndroidManifest.xml" in out:
+            return "apk"
+
+    except Exception as e:
+        print(f"File check error: {e}")
+
+    return "invalid"
+
+
+# ============================================================
+# CANDIDATE PROCESSOR
+# ============================================================
+
+def candidate(relative_path, number, total):
+    page = f"{BASE}/apk/{relative_path}"
+    temp = f"{app_key}-{number}.tmp"
+
+    print()
+    print("======================================")
+    print(f"CANDIDATE {number}/{total}")
+    print(page)
+    print("======================================")
+
+    try:
+        html = wget(page)
+        if not html:
+            raise Exception("Không tải được APKMirror page")
+
+        print("\nWaiting 15 seconds for downloadButton...")
+        for i in range(15, 0, -1):
+            sys.stdout.write(f"\rWaiting {i}s...")
+            sys.stdout.flush()
+            sleep(1)
+        print()
+
+        button = find_download_button(html)
+        retry = 0
+        while not button and retry < 15:
+            retry += 1
+            print(f"Retry downloadButton {retry}/15...")
+            sleep(1)
+            html = wget(page)
+            button = find_download_button(html)
+
+        if not button:
+            raise Exception("Không tìm thấy downloadButton")
+
+        download_page = absolute_url(button, page)
+        if not download_page:
+            raise Exception("Download page URL không hợp lệ")
+
+        print("\nDOWNLOAD PAGE:")
+        print(download_page)
+
+        html2 = wget(download_page)
+        if not html2:
+            raise Exception("Không tải được download page")
+
+        print("\nWaiting 15 seconds for 'here'...")
+        for i in range(15, 0, -1):
+            sys.stdout.write(f"\rWaiting {i}s...")
+            sys.stdout.flush()
+            sleep(1)
+        print()
+
+        real_url = find_here(html2)
+        retry = 0
+        while not real_url and retry < 15:
+            retry += 1
+            print(f"Retry final URL {retry}/15...")
+            sleep(1)
+            html2 = wget(download_page)
+            real_url = find_here(html2)
+
+        if not real_url:
+            raise Exception("Không tìm thấy link here")
+
+        real_url = absolute_url(real_url, download_page)
+        if not real_url:
+            raise Exception("Final download URL không hợp lệ")
+
+        print("\nREAL DOWNLOAD:")
+        print(real_url)
+
+        if os.path.exists(temp):
+            os.remove(temp)
+
+        print("\nDownloading APK...")
+        download(real_url, temp)
+
+        file_type = check_file(temp)
+        print("\nFILE TYPE:", file_type)
+
+        if file_type == "bundle":
+            print("Bundle detected - skip.")
+            if os.path.exists(temp):
+                os.remove(temp)
+            return False
+
+        if file_type != "apk":
+            print("Invalid APK - skip.")
+            if os.path.exists(temp):
+                os.remove(temp)
+            return False
+
+        if os.path.exists(output_filename):
+            os.remove(output_filename)
+
+        shutil.move(temp, output_filename)
+        size_mb = os.path.getsize(output_filename) / 1024 / 1024
+
+        print()
+        print("======================================")
+        print("NORMAL APK FOUND")
+        print("======================================")
+        print("FILE:", output_filename)
+        print("SIZE:", f"{size_mb:.2f} MB")
+        print()
+
+        return True
+
+    except Exception as error:
+        print()
+        print(f"Candidate {number} failed: {error}")
+        if os.path.exists(temp):
+            try:
+                os.remove(temp)
+            except Exception:
+                pass
+        return False
+
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    args = parse_args()
-    app_key = args.app.strip().lower()
-    if app_key not in APP_CONFIG:
-        print(f"Ứng dụng không được hỗ trợ: {args.app}", file=sys.stderr)
-        sys.exit(1)
+    prefix_dir = f"{cfg['dir_prefix']}-{V}-release"
+    slug = f"{cfg['slug_prefix']}-{V}"
 
-    cfg = APP_CONFIG[app_key]
-    version = resolve_version(app_key, args.version_or_file)
-    output_apk = args.output.strip() or (
-        "ytm_orig.apk" if app_key in ("ytm", "music") else "yt_orig.apk"
-    )
+    candidates = [
+        f"{prefix_dir}/{slug}-2-android-apk-download/",
+        f"{prefix_dir}/{slug}-android-apk-download/",
+        f"{prefix_dir}/{slug}-3-android-apk-download/",
+        f"{prefix_dir}/{slug}-4-android-apk-download/",
+    ]
 
-    print(f"Đang tải {cfg['slug']} ({cfg['pkg']}) phiên bản {version} -> {output_apk}")
+    print("======================================")
+    print(f"{cfg['label']} APKMirror Downloader")
+    print("======================================")
+    print("PACKAGE:", cfg["pkg"])
+    print("VERSION:", version)
+    print("OUTPUT:", output_filename)
+    print("======================================")
 
-    release_url = find_release_page(cfg["slug"], version)
-    print(f"Release page: {release_url}")
+    for i, path in enumerate(candidates, start=1):
+        if candidate(path, i, len(candidates)):
+            return
 
-    variant_url = find_variant_page(release_url)
-    print(f"Variant page: {variant_url}")
-
-    dl_url = find_final_download_url(variant_url)
-    print(f"Download URL: {dl_url}")
-
-    data = http_get(dl_url, timeout=120)
-    out_dir = os.path.dirname(output_apk)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-    with open(output_apk, "wb") as f:
-        f.write(data)
-
-    verify_apk(output_apk)
-    print(f"Hoàn tất tải hợp lệ: {output_apk} ({os.path.getsize(output_apk)} bytes)")
+    raise Exception(f"Không tìm thấy NORMAL APK cho {cfg['label']} {version}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nERROR: Interrupted by user")
+        sys.exit(130)
+    except Exception as error:
+        print("\n======================================")
+        print("ERROR:", error)
+        print("======================================")
+        sys.exit(1)
