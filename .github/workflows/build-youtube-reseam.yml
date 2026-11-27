@@ -162,14 +162,29 @@ jobs:
         run: |
           cd work
 
+          "$RESEAM_BIN" patch --help || true
+
+          # Thử lấy public key hex từ release của Reseam/patches (nếu có)
+          TRUST_KEY=$(curl -s https://api.github.com/repos/Reseam/patches/releases/latest \
+            | grep -oE '[0-9a-fA-F]{64,128}' \
+            | head -n 1)
+
+          TRUST_ARGS=()
+          if [ -n "$TRUST_KEY" ]; then
+            echo "Found trust public key: $TRUST_KEY"
+            TRUST_ARGS=(--trust "$TRUST_KEY")
+          else
+            echo "No trust key found, skipping --trust flag."
+          fi
+
           "$RESEAM_BIN" patch yt_orig.apk \
             --bundle patches.reseam \
-            --trust \
+            "${TRUST_ARGS[@]}" \
             --output "youtube-reseam-${YT_VER}.apk"
 
           "$RESEAM_BIN" patch ytm_orig.apk \
             --bundle patches.reseam \
-            --trust \
+            "${TRUST_ARGS[@]}" \
             --output "youtube-music-reseam-${YTM_VER}.apk"
 
       - name: Create Release & Upload APKs
