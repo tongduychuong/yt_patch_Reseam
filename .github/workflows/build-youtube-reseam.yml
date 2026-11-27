@@ -13,6 +13,11 @@ on:
         required: false
         default: ''
         type: string
+      force_build:
+        description: 'Bắt buộc chạy build kể cả khi CLI và Patches không đổi (true/false)'
+        required: false
+        default: 'false'
+        type: string
   schedule:
     - cron: '0 0 * * 0'
 
@@ -20,7 +25,89 @@ permissions:
   contents: write
 
 jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      cli_tag: ${{ steps.check.outputs.cli_tag }}
+      patches_tag: ${{ steps.check.outputs.patches_tag }}
+
+    steps:
+      - name: Check reseam/reseam and Reseam/patches Against Latest Release Changelog
+        id: check
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_BUILD: ${{ github.event.inputs.force_build }}
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+
+          token = os.environ.get("GH_TOKEN", "").strip()
+          repo = os.environ["GH_REPO"]
+          force = os.environ.get("FORCE_BUILD", "false").lower() == "true"
+
+          def gh_get_json(url: str) -> dict:
+              headers = {
+                  "User-Agent": "github-actions-reseam-checker",
+                  "Accept": "application/vnd.github+json",
+              }
+              if token:
+                  headers["Authorization"] = f"Bearer {token}"
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  return json.loads(resp.read().decode("utf-8"))
+
+          latest_cli = (
+              gh_get_json("https://api.github.com/repos/reseam/reseam/releases/latest").get("tag_name") or ""
+          ).strip()
+          latest_patches = (
+              gh_get_json("https://api.github.com/repos/Reseam/patches/releases/latest").get("tag_name") or ""
+          ).strip()
+
+          if not latest_cli or not latest_patches:
+              raise RuntimeError("Could not fetch latest tag from reseam/reseam or Reseam/patches")
+
+          prev_cli = ""
+          prev_patches = ""
+
+          try:
+              rel = gh_get_json(f"https://api.github.com/repos/{repo}/releases/latest")
+              body = rel.get("body") or ""
+
+              m_cli = re.search(r"Reseam CLI\s*\(`reseam/reseam`\):\s*`([^`]+)`", body)
+              m_patches = re.search(r"Reseam Patches\s*\(`Reseam/patches`\):\s*`([^`]+)`", body)
+
+              if m_cli:
+                  prev_cli = m_cli.group(1).strip()
+              if m_patches:
+                  prev_patches = m_patches.group(1).strip()
+          except urllib.error.HTTPError as e:
+              if e.code == 404:
+                  print("No previous release found yet; proceeding to build.")
+              else:
+                  raise
+
+          changed = (latest_cli != prev_cli) or (latest_patches != prev_patches)
+          should_build = changed or force
+
+          print(f"Latest release CLI:     {prev_cli or '(none)'} -> Current: {latest_cli}")
+          print(f"Latest release Patches: {prev_patches or '(none)'} -> Current: {latest_patches}")
+          print(f"Changed: {changed} | Force: {force} | Should build: {should_build}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"should_build={'true' if should_build else 'false'}\n")
+              out.write(f"cli_tag={latest_cli}\n")
+              out.write(f"patches_tag={latest_patches}\n")
+          EOF
+
   build:
+    needs: check-updates
+    if: needs.check-updates.outputs.should_build == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -132,17 +219,8 @@ jobs:
         run: |
           source /tmp/resolved_versions.env
 
-          CLI_TAG=$(curl -s https://api.github.com/repos/reseam/reseam/releases/latest \
-            | grep -i '"tag_name"' \
-            | head -n 1 \
-            | cut -d '"' -f 4)
-          CLI_TAG="${CLI_TAG:-latest}"
-
-          PATCHES_TAG=$(curl -s https://api.github.com/repos/Reseam/patches/releases/latest \
-            | grep -i '"tag_name"' \
-            | head -n 1 \
-            | cut -d '"' -f 4)
-          PATCHES_TAG="${PATCHES_TAG:-latest}"
+          CLI_TAG="${{ needs.check-updates.outputs.cli_tag }}"
+          PATCHES_TAG="${{ needs.check-updates.outputs.patches_tag }}"
 
           cat <<EOF > CHANGELOG.md
           # Reseam Build #${{ github.run_number }}
