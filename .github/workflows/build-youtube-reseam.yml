@@ -135,10 +135,6 @@ jobs:
           if not ytm_ver and valid_ytm:
               ytm_ver = sorted(valid_ytm, key=ver_key)[-1]
 
-          # Giá trị dự phòng chuẩn nếu không đọc được từ JSON
-          yt_ver = yt_ver or "21.37.42"
-          ytm_ver = ytm_ver or "9.40.51"
-
           print(f"Resolved YouTube version: {yt_ver}")
           print(f"Resolved YouTube Music version: {ytm_ver}")
 
@@ -159,32 +155,21 @@ jobs:
           ls -lh yt_orig.apk ytm_orig.apk
 
       - name: Patch YouTube & YouTube Music
+        env:
+          SECRET_TRUST_KEY: ${{ secrets.RESEAM_TRUST_KEY }}
         run: |
           cd work
 
-          "$RESEAM_BIN" patch --help || true
-
-          # Thử lấy public key hex từ release của Reseam/patches (nếu có)
-          TRUST_KEY=$(curl -s https://api.github.com/repos/Reseam/patches/releases/latest \
-            | grep -oE '[0-9a-fA-F]{64,128}' \
-            | head -n 1)
-
-          TRUST_ARGS=()
-          if [ -n "$TRUST_KEY" ]; then
-            echo "Found trust public key: $TRUST_KEY"
-            TRUST_ARGS=(--trust "$TRUST_KEY")
-          else
-            echo "No trust key found, skipping --trust flag."
-          fi
+          TRUST_KEY="${SECRET_TRUST_KEY:-556c1b22f4e03398212ba10fe6a31db252df49f599b938d24a9f2b6baec41a1d}"
 
           "$RESEAM_BIN" patch yt_orig.apk \
             --bundle patches.reseam \
-            "${TRUST_ARGS[@]}" \
+            --trust "$TRUST_KEY" \
             --output "youtube-reseam-${YT_VER}.apk"
 
           "$RESEAM_BIN" patch ytm_orig.apk \
             --bundle patches.reseam \
-            "${TRUST_ARGS[@]}" \
+            --trust "$TRUST_KEY" \
             --output "youtube-music-reseam-${YTM_VER}.apk"
 
       - name: Create Release & Upload APKs
