@@ -105,8 +105,14 @@ jobs:
               rel = gh_get_json(f"https://api.github.com/repos/{repo}/releases/latest")
               body = (rel.get("body") or "") if isinstance(rel, dict) else ""
 
-              m_cli = re.search(r"Reseam CLI\s*\(`reseam/reseam`\):\s*`([^`]+)`", body)
-              m_patches = re.search(r"Reseam Patches\s*\(`Reseam/patches`\):\s*`([^`]+)`", body)
+              m_cli = re.search(
+                  r"Reseam CLI\s*\(`?reseam/reseam`?\)\s*:\s*`?([^\s`\n]+)`?",
+                  body,
+              )
+              m_patches = re.search(
+                  r"Reseam Patches\s*\(`?Reseam/patches`?\)\s*:\s*`?([^\s`\n]+)`?",
+                  body,
+              )
 
               if m_cli:
                   prev_cli = m_cli.group(1).strip()
