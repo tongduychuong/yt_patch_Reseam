@@ -55,6 +55,12 @@ def extract_tag_for_keyword(keyword: str, text: str) -> str:
     for line in text.splitlines():
         if keyword.lower() in line.lower() and ":" in line:
             after_colon = line.split(":", 1)[1].strip()
+            m_link = re.search(
+                r"\[([vV]?\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9._-]+)?)\]\([^)]+\)",
+                after_colon,
+            )
+            if m_link:
+                return m_link.group(1).strip()
             m = re.search(r"([vV]?\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9._-]+)?)", after_colon)
             if m:
                 return m.group(1).strip()
@@ -69,7 +75,7 @@ def main() -> None:
     repo = os.environ["GH_REPO"].strip()
     force = os.environ.get("FORCE_BUILD", "false").strip().lower() == "true"
 
-    latest_cli = resolve_repo_tag("reseam/reseam", token)
+    latest_cli = resolve_repo_tag("Reseam/reseam", token)
     latest_patches = resolve_repo_tag("Reseam/patches", token)
 
     prev_cli = ""
@@ -79,7 +85,7 @@ def main() -> None:
         rel = gh_get_json(f"https://api.github.com/repos/{repo}/releases/latest", token)
         body = (rel.get("body") or "") if isinstance(rel, dict) else ""
 
-        prev_cli = extract_tag_for_keyword("reseam/reseam", body)
+        prev_cli = extract_tag_for_keyword("Reseam/reseam", body)
         prev_patches = extract_tag_for_keyword("Reseam/patches", body)
 
         if not prev_cli or not prev_patches:
@@ -94,6 +100,9 @@ def main() -> None:
     changed = (latest_cli != prev_cli) or (latest_patches != prev_patches)
     should_build = changed or force
 
+    cli_link_tag = f"[{latest_cli}](https://github.com/Reseam/reseam/releases/tag/{latest_cli})"
+    patches_link_tag = f"[{latest_patches}](https://github.com/Reseam/patches/releases/tag/{latest_patches})"
+
     print(f"Latest release CLI:     {prev_cli or '(none)'} -> Current: {latest_cli}")
     print(f"Latest release Patches: {prev_patches or '(none)'} -> Current: {latest_patches}")
     print(f"Changed: {changed} | Force: {force} | Should build: {should_build}")
@@ -102,8 +111,8 @@ def main() -> None:
     if github_output:
         with open(github_output, "a", encoding="utf-8") as out:
             out.write(f"should_build={'true' if should_build else 'false'}\n")
-            out.write(f"cli_tag={latest_cli}\n")
-            out.write(f"patches_tag={latest_patches}\n")
+            out.write(f"cli_tag={cli_link_tag}\n")
+            out.write(f"patches_tag={patches_link_tag}\n")
 
 
 if __name__ == "__main__":
