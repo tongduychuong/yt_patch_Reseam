@@ -19,7 +19,7 @@ on:
         default: false
         type: boolean
   schedule:
-    - cron: '0 20 * * *'
+    - cron: '0 * * * *'
 
 permissions:
   contents: write
@@ -37,7 +37,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check reseam/reseam and Reseam/patches Against Latest Release Changelog
+      - name: Check Reseam/reseam and Reseam/patches Against Latest Release Changelog
         id: check
         env:
           GH_REPO: ${{ github.repository }}
@@ -70,8 +70,8 @@ jobs:
           mkdir -p work
           cd work
 
-          # 1. Tải Reseam CLI mới nhất từ reseam/reseam
-          CLI_URL=$(curl -s https://api.github.com/repos/reseam/reseam/releases/latest \
+          # 1. Tải Reseam CLI mới nhất từ Reseam/reseam
+          CLI_URL=$(curl -s https://api.github.com/repos/Reseam/reseam/releases/latest \
             | grep -i "browser_download_url" \
             | grep -iE "linux.*(x64|amd64)|x86_64.*linux" \
             | head -n 1 \
@@ -163,13 +163,12 @@ jobs:
           PATCHES_TAG="${{ needs.check-updates.outputs.patches_tag }}"
 
           cat <<EOF > CHANGELOG.md
-          # Reseam Build #${{ github.run_number }}
+          # Reseam Build
 
           - **YouTube version:** \`${YT_VER}\`
           - **YouTube Music version:** \`${YTM_VER}\`
-          - **Reseam CLI (\`reseam/reseam\`):** \`${CLI_TAG}\`
-          - **Reseam Patches (\`Reseam/patches\`):** \`${PATCHES_TAG}\`
-          - **Commit:** \`${{ github.sha }}\`
+          - **Reseam CLI (Reseam/reseam):** ${CLI_TAG}
+          - **Reseam Patches (Reseam/patches):** ${PATCHES_TAG}
           EOF
           cat CHANGELOG.md
 
@@ -177,10 +176,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: "Reseam Build #${{ github.run_number }} (YT ${{ env.YT_VER }})"
+          name: "Reseam Build (YT ${{ env.YT_VER }})"
           body_path: CHANGELOG.md
           files: |
-            CHANGELOG.md
             work/youtube-reseam-${{ env.YT_VER }}.apk
             work/youtube-music-reseam-${{ env.YTM_VER }}.apk
         env:
