@@ -95,6 +95,12 @@ jobs:
 
               raise RuntimeError(f"Không tìm thấy release hoặc tag nào cho {target_repo}")
 
+          def extract_field(pattern: str, text: str) -> str:
+              m = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+              if not m:
+                  return ""
+              return m.group(1).strip().strip("*`").strip()
+
           latest_cli = resolve_repo_tag("reseam/reseam")
           latest_patches = resolve_repo_tag("Reseam/patches")
 
@@ -105,19 +111,14 @@ jobs:
               rel = gh_get_json(f"https://api.github.com/repos/{repo}/releases/latest")
               body = (rel.get("body") or "") if isinstance(rel, dict) else ""
 
-              m_cli = re.search(
-                  r"Reseam CLI\s*\(`?reseam/reseam`?\)\s*:\s*`?([^\s`\n]+)`?",
+              prev_cli = extract_field(
+                  r"Reseam CLI[^\n]*reseam/reseam[^\n]*:\s*\**`?([^\s`*\n]+)`?\**",
                   body,
               )
-              m_patches = re.search(
-                  r"Reseam Patches\s*\(`?Reseam/patches`?\)\s*:\s*`?([^\s`\n]+)`?",
+              prev_patches = extract_field(
+                  r"Reseam Patches[^\n]*Reseam/patches[^\n]*:\s*\**`?([^\s`*\n]+)`?\**",
                   body,
               )
-
-              if m_cli:
-                  prev_cli = m_cli.group(1).strip()
-              if m_patches:
-                  prev_patches = m_patches.group(1).strip()
           except urllib.error.HTTPError as e:
               if e.code == 404:
                   print("No previous release found yet; proceeding to build.")
